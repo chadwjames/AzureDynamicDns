@@ -22,8 +22,8 @@ namespace DynamicIp
         [Function("UpdateDNSFunction")]
         public async Task RunAsync([TimerTrigger("0 * * * * *")] MyInfo myTimer)
         {
-            _logger.LogInformation($"C# Timer trigger function executed at: {DateTime.Now}");
-            _logger.LogInformation($"Next timer schedule at: {myTimer.ScheduleStatus.Next}");
+            _logger.LogInformation("C# Timer trigger function executed at: {Time}", DateTime.Now);
+            _logger.LogInformation("Next timer schedule at: {Next}", myTimer.ScheduleStatus.Next);
 
             var dynamicDnsDomain = _configuration["DynamicDnsDomain"];
             var resourceGroupName = _configuration["ResourceGroupName"];
@@ -39,7 +39,7 @@ namespace DynamicIp
                 return;
             }
 
-            _logger.LogInformation($"Domain: {dynamicDnsDomain} IP Address: {ipAddress}");
+            _logger.LogInformation("Domain: {dynamicDnsDomain} IP Address: {ipAddress}", dynamicDnsDomain, ipAddress);
 
             // Build the service credentials and DNS management client
             var tenantId = _configuration["TenantId"];
@@ -88,7 +88,7 @@ namespace DynamicIp
             catch (Exception ex)
             {
                 // Handle exceptions (e.g., domain not found)
-                _logger.LogError(ex.Message);
+                _logger.LogError("{message}", ex.Message);
                 return null;
             }
         }

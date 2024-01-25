@@ -262,3 +262,6 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+/Properties/PublishProfiles
+/Properties/ServiceDependencies/DynamicIp20240125080510 - Zip Deploy
+/Properties/serviceDependencies.DynamicIp20240125080510 - Zip Deploy.json
