@@ -1,10 +1,12 @@
 using System.Net;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Management.Dns;
-using Microsoft.Azure.Management.Dns.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Rest.Azure.Authentication;
+using Azure.ResourceManager.Dns;
+using Azure.ResourceManager;
+using Azure.ResourceManager.Dns.Models;
 
 namespace DynamicIp
 {
@@ -20,61 +22,74 @@ namespace DynamicIp
         }
 
         [Function("UpdateDNSFunction")]
-        public async Task RunAsync([TimerTrigger("0 * * * * *")] MyInfo myTimer)
+        public async Task RunAsync([TimerTrigger("* * * * *")] MyInfo myTimer)
         {
             _logger.LogInformation("C# Timer trigger function executed at: {Time}", DateTime.Now);
             _logger.LogInformation("Next timer schedule at: {Next}", myTimer.ScheduleStatus.Next);
 
-            var dynamicDnsDomain = _configuration["DynamicDnsDomain"];
-            var resourceGroupName = _configuration["ResourceGroupName"];
-            var dnsZoneName = _configuration["DnsZoneName"];
-            var recordSetName = _configuration["RecordSetName"];
-            var subscriptionId = _configuration["SubscriptoinId"];
 
             // Get IP address from dynamic dns domain.
-            var ipAddress = await GetIpAddressForDomain(dynamicDnsDomain);
-            if (string.IsNullOrEmpty(ipAddress))
+            var dynamicDnsDomain = _configuration["DynamicDnsDomain"];
+            var dynamicDnsIpAddress = await GetIpAddressForDomain(dynamicDnsDomain);
+            if (string.IsNullOrEmpty(dynamicDnsIpAddress))
             {
                 _logger.LogError("Failed to resolve IP address for domain");
                 return;
             }
 
-            _logger.LogInformation("Domain: {dynamicDnsDomain} IP Address: {ipAddress}", dynamicDnsDomain, ipAddress);
+            _logger.LogInformation("Domain: {dynamicDnsDomain} IP Address: {ipAddress}", dynamicDnsDomain, dynamicDnsIpAddress);
 
             // Build the service credentials and DNS management client
+            var resourceGroupName = _configuration["ResourceGroupName"];
+            var dnsZoneName = _configuration["DnsZoneName"];
+            var recordSetName = _configuration["RecordSetName"];
+            var subscriptionId = _configuration["SubscriptoinId"];            
             var tenantId = _configuration["TenantId"];
             var clientId = _configuration["ClientId"];
-            var secret = _configuration["Secret"];
+            var clientSecret = _configuration["Secret"];
 
-            var serviceCreds = await ApplicationTokenProvider.LoginSilentAsync(tenantId, clientId, secret);
-            var dnsClient = new DnsManagementClient(serviceCreds)
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            var armClient = new ArmClient(credential);
+
+            var subscription = armClient.GetSubscriptionResource(new ResourceIdentifier($"/subscriptions/{subscriptionId}"));
+            var resourceGroup = await subscription.GetResourceGroupAsync(resourceGroupName);
+            var dnsZone = await resourceGroup.Value.GetDnsZoneAsync(dnsZoneName);
+            
+
+            var dnsARecordSetResource = (await dnsZone.Value.GetDnsARecordAsync(recordSetName)).Value;
+
+            // Verify record exists
+            if (dnsARecordSetResource.Data.DnsARecords.Count  == 0)
             {
-                SubscriptionId = subscriptionId
-            };
+                _logger.LogError("No IP address found in the record set.");
+                return;
+            }
 
-            var recordSet = dnsClient.RecordSets.Get(resourceGroupName, dnsZoneName, recordSetName, RecordType.A);
+            var ipAddress = IPAddress.Parse(dynamicDnsIpAddress);
 
-            // Add a new record to the local object.  Note that records in a record set must be unique/distinct
-            if(recordSet.ARecords.FirstOrDefault()?.Ipv4Address != ipAddress)
+            // Check if the IP address is different from the current record set
+            if (dnsARecordSetResource.Data.DnsARecords.FirstOrDefault()?.IPv4Address.ToString() != ipAddress.ToString())
             {
 
                 _logger.LogInformation("IP address change detected, updating DNS record.");
+                var recordSet = dnsARecordSetResource.Data;
 
-                recordSet.ARecords.Clear();
-                recordSet.ARecords.Add(new ARecord(ipAddress));
+                recordSet.DnsARecords.Clear();
+                var dnsARecordInfo = new DnsARecordInfo
+                {
+                    IPv4Address = ipAddress,                    
+                };
+
+                recordSet.DnsARecords.Add(dnsARecordInfo);
 
                 // Update the record set in Azure DNS
-                // Note: ETAG check specified, update will be rejected if the record set has changed in the meantime
-                _ = await dnsClient.RecordSets.CreateOrUpdateAsync(resourceGroupName, dnsZoneName, recordSetName, RecordType.A, recordSet, recordSet.Etag);
+                await dnsARecordSetResource.UpdateAsync(recordSet, recordSet.ETag);
+                
             }
             else
             {
                 _logger.LogInformation("No IP address change detected, do nothing.");
             }
-
-            //Sleep for one 1 Seconds.
-            _logger.LogInformation("Sleeping for 30 seconds...");
-            Thread.Sleep(1000);
         }
 
         private async Task<string?> GetIpAddressForDomain(string dynamicDnsDomain)
