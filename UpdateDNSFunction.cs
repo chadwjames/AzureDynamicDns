@@ -41,7 +41,7 @@ namespace DynamicIp
 
             // Build the service credentials and DNS management client
             var resourceGroupName = _configuration["ResourceGroupName"];
-            var dnsZoneName = _configuration["DnsZoneName"];
+            var dnsZoneNames = _configuration["DnsZoneNames"];
             var recordSetName = _configuration["RecordSetName"];
             var subscriptionId = _configuration["SubscriptoinId"];            
             var tenantId = _configuration["TenantId"];
@@ -53,42 +53,52 @@ namespace DynamicIp
 
             var subscription = armClient.GetSubscriptionResource(new ResourceIdentifier($"/subscriptions/{subscriptionId}"));
             var resourceGroup = await subscription.GetResourceGroupAsync(resourceGroupName);
-            var dnsZone = await resourceGroup.Value.GetDnsZoneAsync(dnsZoneName);
-            
 
-            var dnsARecordSetResource = (await dnsZone.Value.GetDnsARecordAsync(recordSetName)).Value;
-
-            // Verify record exists
-            if (dnsARecordSetResource.Data.DnsARecords.Count  == 0)
+            if (string.IsNullOrEmpty(dnsZoneNames))
             {
-                _logger.LogError("No IP address found in the record set.");
+                _logger.LogError("No DNS zone names found in the configuration.");
                 return;
             }
 
-            var ipAddress = IPAddress.Parse(dynamicDnsIpAddress);
-
-            // Check if the IP address is different from the current record set
-            if (dnsARecordSetResource.Data.DnsARecords.FirstOrDefault()?.IPv4Address.ToString() != ipAddress.ToString())
+            foreach (var dnsZoneName in dnsZoneNames.Split(','))
             {
 
-                _logger.LogInformation("IP address change detected, updating DNS record.");
-                var recordSet = dnsARecordSetResource.Data;
+                var dnsZone = await resourceGroup.Value.GetDnsZoneAsync(dnsZoneName);
 
-                recordSet.DnsARecords.Clear();
-                var dnsARecordInfo = new DnsARecordInfo
+                var dnsARecordSetResource = (await dnsZone.Value.GetDnsARecordAsync(recordSetName)).Value;
+
+                // Verify record exists
+                if (dnsARecordSetResource.Data.DnsARecords.Count == 0)
                 {
-                    IPv4Address = ipAddress,                    
-                };
+                    _logger.LogError("No IP address found in the record set.");
+                    return;
+                }
 
-                recordSet.DnsARecords.Add(dnsARecordInfo);
+                var ipAddress = IPAddress.Parse(dynamicDnsIpAddress);
 
-                // Update the record set in Azure DNS
-                await dnsARecordSetResource.UpdateAsync(recordSet, recordSet.ETag);
-                
-            }
-            else
-            {
-                _logger.LogInformation("No IP address change detected, do nothing.");
+                // Check if the IP address is different from the current record set
+                if (dnsARecordSetResource.Data.DnsARecords.FirstOrDefault()?.IPv4Address.ToString() != ipAddress.ToString())
+                {
+
+                    _logger.LogInformation("IP address change detected, updating DNS record.");
+                    var recordSet = dnsARecordSetResource.Data;
+
+                    recordSet.DnsARecords.Clear();
+                    var dnsARecordInfo = new DnsARecordInfo
+                    {
+                        IPv4Address = ipAddress,
+                    };
+
+                    recordSet.DnsARecords.Add(dnsARecordInfo);
+
+                    // Update the record set in Azure DNS
+                    await dnsARecordSetResource.UpdateAsync(recordSet, recordSet.ETag);
+
+                }
+                else
+                {
+                    _logger.LogInformation("No IP address change detected, do nothing.");
+                }
             }
         }
 
