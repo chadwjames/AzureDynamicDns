@@ -138,6 +138,9 @@ DocProject/Help/*.hhp
 DocProject/Help/Html2
 DocProject/Help/html
 
+#ServiceDependencies
+ServiceDependencies/
+
 # Click-Once directory
 publish/
 
